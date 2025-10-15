@@ -169,6 +169,8 @@ func ensureMonitoringDB(ctx context.Context, e *MilvusEndpoint) error {
 		if uerr := e.Client.UseDatabase(tctx, milvusclient.NewUseDatabaseOption(db)); uerr != nil {
 			return errors.Wrapf(uerr, "use database %q", db)
 		}
+	} else {
+		level.Info(e.Logger).Log("msg", "use database succeeded", "db", db)
 	}
 	// Set for labeling.
 	level.Info(e.Logger).Log("msg", "Using database", "db", db)
