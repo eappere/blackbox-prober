@@ -252,7 +252,8 @@ func initCollectionIfNeeded(ctx context.Context, e *MilvusEndpoint, collectionNa
 
 	qr, err := e.Client.Query(ctx, milvusclient.NewQueryOption(collectionName).
 		WithFilter(fmt.Sprintf(`key == "%s"`, flagKey)).
-		WithOutputFields("value"))
+		WithOutputFields("value").
+		WithConsistencyLevel(entity.ClStrong))
 	if err == nil {
 		if vcol := qr.GetColumn("value"); vcol != nil {
 			if vv := vcol.(*mvcol.ColumnVarChar).Data(); len(vv) > 0 && vv[0] == expectedFlagValue {
@@ -297,17 +298,8 @@ func initCollectionIfNeeded(ctx context.Context, e *MilvusEndpoint, collectionNa
 		}
 	}
 
-	{
-		tctx, cancel := context.WithTimeout(ctx, flushTimeout)
-		defer cancel()
-		ft, err := e.Client.Flush(tctx, milvusclient.NewFlushOption(collectionName))
-		if err != nil {
-			return errors.Wrap(err, "flush after init")
-		}
-		if err := ft.Await(tctx); err != nil {
-			return errors.Wrap(err, "await flush after init")
-		}
-	}
+	// Work around default rate limiting settings (10s per flush query per collection, then add 1s for safety)
+	//time.Sleep(11 * time.Second)
 
 	{
 		vec := normalizeVector(generateRandomVector(DIMENSION))
@@ -320,17 +312,19 @@ func initCollectionIfNeeded(ctx context.Context, e *MilvusEndpoint, collectionNa
 		); err != nil {
 			return errors.Wrap(err, "insert init flag")
 		}
+	}
+
+	{
 		tctx, cancel := context.WithTimeout(ctx, flushTimeout)
 		defer cancel()
 		ft, err := e.Client.Flush(tctx, milvusclient.NewFlushOption(collectionName))
 		if err != nil {
-			return errors.Wrap(err, "flush init flag")
+			return errors.Wrap(err, "initCollectionIfNeeded flush")
 		}
 		if err := ft.Await(tctx); err != nil {
-			return errors.Wrap(err, "await flush init flag")
+			return errors.Wrap(err, "await initCollectionIfNeeded flush")
 		}
 	}
-
 	return nil
 }
 
@@ -398,17 +392,22 @@ func LatencyCheck(p topology.ProbeableEndpoint) error {
 			); err != nil {
 				return err
 			}
-			tctx, cancel := context.WithTimeout(ctx, flushTimeout)
+			// Manual flush for streamed data is an antipattern but we need it for probe correctness
+
+			/*tctx, cancel := context.WithTimeout(ctx, flushTimeout)
 			defer cancel()
 			ft, err := e.Client.Flush(tctx, milvusclient.NewFlushOption(col))
 			if err != nil {
 				return err
 			}
-			return ft.Await(tctx)
+			return ft.Await(tctx)*/
+			return nil
 		}
 		if err := ObserveOpLatency(opInsert, labels); err != nil {
 			return errors.Wrap(err, "insert batch")
 		}
+		// Work around default rate limiting settings (10s per flush query per collection, then add 1s for safety)
+		//time.Sleep(11 * time.Second)
 
 		labels[0] = "search"
 		opSearch := func() error {
@@ -421,7 +420,8 @@ func LatencyCheck(p topology.ProbeableEndpoint) error {
 			rs, err := e.Client.Search(tctx,
 				milvusclient.NewSearchOption(col, TOP_K, qvecs).
 					WithANNSField("vector").
-					WithOutputFields("id"))
+					WithOutputFields("id").
+					WithConsistencyLevel(entity.ClStrong))
 			if err != nil {
 				return err
 			}
@@ -458,13 +458,16 @@ func LatencyCheck(p topology.ProbeableEndpoint) error {
 			if dr.DeleteCount == 0 {
 				return errors.New("delete reported 0 rows")
 			}
-			tctx, cancel := context.WithTimeout(ctx, flushTimeout)
+			// Manual flush for streamed data is an antipattern but we need it for probe correctness
+
+			/*tctx, cancel := context.WithTimeout(ctx, flushTimeout)
 			defer cancel()
 			ft, err := e.Client.Flush(tctx, milvusclient.NewFlushOption(col))
 			if err != nil {
 				return err
 			}
-			return ft.Await(tctx)
+			return ft.Await(tctx)*/
+			return nil
 		}
 		if err := ObserveOpLatency(opDelete, labels); err != nil {
 			return errors.Wrap(err, "delete batch")
