@@ -132,8 +132,8 @@ func joinInts(a []int64) string {
 
 // ensureMonitoringDB always uses the default DB and creates it if missing.
 func ensureMonitoringDB(ctx context.Context, e *MilvusEndpoint) error {
-	db := defaultDBName
-	tctx, cancel := context.WithTimeout(ctx, dbTimeout)
+	db := e.Config.MonitoringDatabase
+	tctx, cancel := context.WithTimeout(ctx, e.Config.CreateDatabaseTimeout)
 	defer cancel()
 
 	// Try to use it.
@@ -166,7 +166,7 @@ func ensureCollection(ctx context.Context, e *MilvusEndpoint, collectionName str
 			return errors.Wrap(err, "failed to get load state")
 		}
 		if ls.State == entity.LoadStateNotLoad {
-			tctx, cancel := context.WithTimeout(ctx, loadTimeout)
+			tctx, cancel := context.WithTimeout(ctx, e.Config.LoadTimeout)
 			defer cancel()
 			loadTask, err := e.Client.LoadCollection(tctx, milvusclient.NewLoadCollectionOption(collectionName))
 			if err != nil {
@@ -192,7 +192,7 @@ func ensureCollection(ctx context.Context, e *MilvusEndpoint, collectionName str
 	level.Info(e.Logger).Log("msg", "Created collection", "collection", collectionName)
 
 	{
-		tctx, cancel := context.WithTimeout(ctx, indexTimeout)
+		tctx, cancel := context.WithTimeout(ctx, e.Config.IndexTimeout)
 		defer cancel()
 		idx := mvindex.NewFlatIndex(METRIC_TYPE)
 		createIdxTask, err := e.Client.CreateIndex(tctx, milvusclient.NewCreateIndexOption(collectionName, "vector", idx))
@@ -206,7 +206,7 @@ func ensureCollection(ctx context.Context, e *MilvusEndpoint, collectionName str
 	level.Info(e.Logger).Log("msg", "Created FLAT index", "collection", collectionName)
 
 	{
-		tctx, cancel := context.WithTimeout(ctx, loadTimeout)
+		tctx, cancel := context.WithTimeout(ctx, e.Config.LoadTimeout)
 		defer cancel()
 		loadTask, err := e.Client.LoadCollection(tctx, milvusclient.NewLoadCollectionOption(collectionName))
 		if err != nil {
@@ -223,8 +223,8 @@ func ensureCollection(ctx context.Context, e *MilvusEndpoint, collectionName str
 
 // initCollectionIfNeeded populates a collection with INIT_ITEMS_PER_COL items once.
 func initCollectionIfNeeded(ctx context.Context, e *MilvusEndpoint, collectionName, keyPrefix string) error {
-	flagKey := fmt.Sprintf("%s%s", keyPrefix, INIT_FLAG_KEY)
-	expectedFlagValue := fmt.Sprintf("v1:%d", INIT_ITEMS_PER_COLLECTION)
+	flagKey := fmt.Sprintf("%s%s", keyPrefix, e.Config.InitFlagKey)
+	expectedFlagValue := fmt.Sprintf("v1:%d", e.Config.InitItemsPerCollection)
 
 	qr, err := e.Client.Query(ctx, milvusclient.NewQueryOption(collectionName).
 		WithFilter(fmt.Sprintf(`key == "%s"`, flagKey)).
@@ -239,13 +239,13 @@ func initCollectionIfNeeded(ctx context.Context, e *MilvusEndpoint, collectionNa
 		}
 	}
 
-	level.Info(e.Logger).Log("msg", "Initializing collection items", "collection", collectionName, "count", INIT_ITEMS_PER_COLLECTION)
+	level.Info(e.Logger).Log("msg", "Initializing collection items", "collection", collectionName, "count", e.Config.InitItemsPerCollection)
 
 	batchSize := 1000
-	for base := 0; base < INIT_ITEMS_PER_COLLECTION; base += batchSize {
+	for base := 0; base < e.Config.InitItemsPerCollection; base += batchSize {
 		end := base + batchSize
-		if end > INIT_ITEMS_PER_COLLECTION {
-			end = INIT_ITEMS_PER_COLLECTION
+		if end > e.Config.InitItemsPerCollection {
+			end = e.Config.InitItemsPerCollection
 		}
 		n := end - base
 
@@ -278,7 +278,7 @@ func initCollectionIfNeeded(ctx context.Context, e *MilvusEndpoint, collectionNa
 		vec := normalizeVector(generateRandomVector(DIMENSION))
 		if _, err := e.Client.Insert(ctx,
 			milvusclient.NewColumnBasedInsertOption(collectionName).
-				WithInt64Column("id", []int64{int64(INIT_ITEMS_PER_COLLECTION)}).
+				WithInt64Column("id", []int64{int64(e.Config.InitItemsPerCollection)}).
 				WithVarcharColumn("key", []string{flagKey}).
 				WithVarcharColumn("value", []string{expectedFlagValue}).
 				WithFloatVectorColumn("vector", DIMENSION, [][]float32{vec}),
@@ -289,7 +289,7 @@ func initCollectionIfNeeded(ctx context.Context, e *MilvusEndpoint, collectionNa
 
 	// Manual flush is OK because this is only done once
 	{
-		tctx, cancel := context.WithTimeout(ctx, flushTimeout)
+		tctx, cancel := context.WithTimeout(ctx, e.Config.InitialFlushTimeout)
 		defer cancel()
 		ft, err := e.Client.Flush(tctx, milvusclient.NewFlushOption(collectionName))
 		if err != nil {
@@ -314,11 +314,11 @@ func LatencyPrepare(p topology.ProbeableEndpoint) error {
 	if err := ensureMonitoringDB(ctx, e); err != nil {
 		return err
 	}
-	for _, col := range []string{COLLECTION_LATENCY_RW, COLLECTION_LATENCY_RO} {
+	for _, col := range []string{e.Config.MonitoringCollectionLatencyRW, e.Config.MonitoringCollectionLatencyRO} {
 		if err := ensureCollection(ctx, e, col); err != nil {
 			return errors.Wrapf(err, "ensure %s", col)
 		}
-		if err := initCollectionIfNeeded(ctx, e, col, initialKeyPrefixLatency); err != nil {
+		if err := initCollectionIfNeeded(ctx, e, col, e.Config.LatencyInitKeyPrefix); err != nil {
 			return errors.Wrapf(err, "init latency %s", col)
 		}
 	}
@@ -340,24 +340,25 @@ func LatencyCheck(p topology.ProbeableEndpoint) error {
 
 	// RW path
 	{
-		col := COLLECTION_LATENCY_RW
+		col := e.Config.MonitoringCollectionLatencyRW
 		if err := ensureCollection(ctx, e, col); err != nil {
 			return errors.Wrap(err, "ensure latency RW collection")
 		}
 
 		now := time.Now().UnixNano()
-		ids := make([]int64, LATENCY_RW_INSERT_PER_CHECK)
-		vecs := make([][]float32, LATENCY_RW_INSERT_PER_CHECK)
-		keys := make([]string, LATENCY_RW_INSERT_PER_CHECK)
-		vals := make([]string, LATENCY_RW_INSERT_PER_CHECK)
-		for i := 0; i < LATENCY_RW_INSERT_PER_CHECK; i++ {
+		insertCount := e.Config.LatencyRWInsertPerCheck
+		ids := make([]int64, insertCount)
+		vecs := make([][]float32, insertCount)
+		keys := make([]string, insertCount)
+		vals := make([]string, insertCount)
+		for i := 0; i < insertCount; i++ {
 			ids[i] = now + int64(i)
 			vecs[i] = normalizeVector(generateRandomVector(DIMENSION))
-			keys[i] = latencyKeyPrefixRw + utils.RandomHex(20)
+			keys[i] = e.Config.LatencyRWKeyPrefix + utils.RandomHex(20)
 			vals[i] = utils.RandomHex(INITIAL_VALUE_HEX_BYTES)
 		}
 
-		labels := []string{"insert", e.Name, defaultDBName, e.ClusterName, e.Name}
+		labels := []string{"insert", e.Name, e.Config.MonitoringDatabase, e.ClusterName, e.Name}
 		opInsert := func() error {
 			if _, err := e.Client.Insert(ctx,
 				milvusclient.NewColumnBasedInsertOption(col).
@@ -383,7 +384,7 @@ func LatencyCheck(p topology.ProbeableEndpoint) error {
 			for i := range vecs {
 				qvecs[i] = entity.FloatVector(vecs[i])
 			}
-			tctx, cancel := context.WithTimeout(ctx, searchTimeout)
+			tctx, cancel := context.WithTimeout(ctx, e.Config.SearchTimeout)
 			defer cancel()
 			rs, err := e.Client.Search(tctx,
 				milvusclient.NewSearchOption(col, TOP_K, qvecs).
@@ -436,12 +437,12 @@ func LatencyCheck(p topology.ProbeableEndpoint) error {
 
 	// RO search latency
 	{
-		col := COLLECTION_LATENCY_RO
+		col := e.Config.MonitoringCollectionLatencyRO
 		if err := ensureCollection(ctx, e, col); err != nil {
 			return errors.Wrap(err, "ensure latency RO collection")
 		}
 
-		sampleIDs := sampleUniqueInts(SEARCH_SAMPLES_PER_CHECK, INIT_ITEMS_PER_COLLECTION)
+		sampleIDs := sampleUniqueInts(e.Config.LatencyRWInsertPerCheck, e.Config.InitItemsPerCollection)
 		q := fmt.Sprintf("id in [%s]", joinInts(sampleIDs))
 		qr, err := e.Client.Query(ctx, milvusclient.NewQueryOption(col).
 			WithFilter(q).
@@ -457,12 +458,12 @@ func LatencyCheck(p topology.ProbeableEndpoint) error {
 		idCol := idColI.(*mvcol.ColumnInt64)
 		vecCol := vecColI.(*mvcol.ColumnFloatVector)
 
-		searchLabels := []string{"search_ro_latency", e.Name, defaultDBName, e.ClusterName, e.Name}
+		searchLabels := []string{"search_ro_latency", e.Name, e.Config.MonitoringDatabase, e.ClusterName, e.Name}
 		for i := 0; i < idCol.Len(); i++ {
 			id := idCol.Data()[i]
 			vec := vecCol.Data()[i]
 			opSearch := func() error {
-				tctx, cancel := context.WithTimeout(ctx, searchTimeout)
+				tctx, cancel := context.WithTimeout(ctx, e.Config.SearchTimeout)
 				defer cancel()
 				rs, err := e.Client.Search(tctx,
 					milvusclient.NewSearchOption(col, TOP_K, []entity.Vector{entity.FloatVector(vec)}).
@@ -500,10 +501,10 @@ func DurabilityPrepare(p topology.ProbeableEndpoint) error {
 	if err := ensureMonitoringDB(ctx, e); err != nil {
 		return err
 	}
-	if err := ensureCollection(ctx, e, COLLECTION_DURABILITY); err != nil {
+	if err := ensureCollection(ctx, e, e.Config.MonitoringCollectionDurability); err != nil {
 		return errors.Wrap(err, "ensure durability")
 	}
-	if err := initCollectionIfNeeded(ctx, e, COLLECTION_DURABILITY, initialKeyPrefixDurability); err != nil {
+	if err := initCollectionIfNeeded(ctx, e, e.Config.MonitoringCollectionDurability, e.Config.DurabilityKeyPrefix); err != nil {
 		return errors.Wrap(err, "init durability")
 	}
 	return nil
