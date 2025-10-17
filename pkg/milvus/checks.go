@@ -55,11 +55,6 @@ var durabilityCorruptedItems = promauto.NewGaugeVec(prometheus.GaugeOpts{
 }, []string{"namespace", "cluster", "probe_endpoint"})
 
 const (
-	// Collections
-	COLLECTION_LATENCY_RW = "monitoring_latency_rw" // write + search + delete
-	COLLECTION_LATENCY_RO = "monitoring_latency_ro" // search-only latency
-	COLLECTION_DURABILITY = "monitoring_durability" // durability verification
-
 	// Vector setup
 	DIMENSION   = 100
 	TOP_K       = 1
@@ -68,27 +63,6 @@ const (
 	// Init
 	MAX_VARCHAR_LEN         = 256
 	INITIAL_VALUE_HEX_BYTES = 128 // 128 hex chars <= 256
-
-	// Initialization
-	INIT_FLAG_KEY               = "init_flag"
-	INIT_ITEMS_PER_COLLECTION   = 10_000
-	LATENCY_RW_INSERT_PER_CHECK = 10
-	SEARCH_SAMPLES              = 10
-
-	// Timeouts
-	loadTimeout   = 60 * time.Second
-	searchTimeout = 30 * time.Second
-	flushTimeout  = 45 * time.Second
-	indexTimeout  = 5 * time.Minute
-	dbTimeout     = 30 * time.Second
-
-	// DB
-	defaultDBName = "monitoring"
-
-	// Key prefixes
-	latencyKeyPrefixRw         = "latency_rw_"
-	initialKeyPrefixLatency    = "latency_init_"
-	initialKeyPrefixDurability = "durability_init_"
 )
 
 func ObserveOpLatency(op func() error, labels []string) error {
@@ -467,7 +441,7 @@ func LatencyCheck(p topology.ProbeableEndpoint) error {
 			return errors.Wrap(err, "ensure latency RO collection")
 		}
 
-		sampleIDs := sampleUniqueInts(SEARCH_SAMPLES, INIT_ITEMS_PER_COLLECTION)
+		sampleIDs := sampleUniqueInts(SEARCH_SAMPLES_PER_CHECK, INIT_ITEMS_PER_COLLECTION)
 		q := fmt.Sprintf("id in [%s]", joinInts(sampleIDs))
 		qr, err := e.Client.Query(ctx, milvusclient.NewQueryOption(col).
 			WithFilter(q).
