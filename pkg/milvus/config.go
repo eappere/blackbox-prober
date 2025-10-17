@@ -45,7 +45,7 @@ type MilvusEndpointConfig struct {
 }
 
 var (
-	defaultMilvusClient = MilvusEndpointConfig{
+	defaultMilvusEndpointConfig = MilvusEndpointConfig{
 		UsernameEnv:                    "MILVUS_USERNAME",
 		PasswordEnv:                    "MILVUS_PASSWORD",
 		TLSTag:                         "tls",
@@ -68,6 +68,17 @@ var (
 		CreateDatabaseTimeout: 600 * time.Second,
 	}
 )
+
+// UnmarshalYAML implements the yaml.Unmarshaler interface.
+func (c *MilvusEndpointConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	*c = defaultMilvusEndpointConfig
+	type plain MilvusEndpointConfig
+	err := unmarshal((*plain)(c))
+	if err != nil {
+		return err
+	}
+	return nil
+}
 
 type MilvusProbeConfig struct {
 	// Generic consul configurations
