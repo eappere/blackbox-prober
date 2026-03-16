@@ -1,6 +1,9 @@
 package opensearch
 
 import (
+	"time"
+
+	"github.com/criteo/blackbox-prober/pkg/common"
 	"github.com/criteo/blackbox-prober/pkg/discovery"
 	"github.com/criteo/blackbox-prober/pkg/scheduler"
 )
@@ -17,6 +20,8 @@ type OpenSearchEndpointConfig struct {
 	TLSTag string `yaml:"tls_tag,omitempty"`
 	// Skip TLS verification
 	InsecureSkipVerify bool `yaml:"insecure_skip_verify,omitempty"`
+	// Recreate connections and force a new authentication handshake on this interval
+	ReauthInterval time.Duration `yaml:"reauth_interval,omitempty"`
 	// Metadata key to get the Hostname to use for TLS auth (only used if tlsTag is set)
 	AddressMetaKey string `yaml:"address_meta_key,omitempty"`
 }
@@ -28,6 +33,7 @@ var (
 		PasswordEnv:        "OPENSEARCH_PASSWORD",
 		TLSTag:             "tls",
 		InsecureSkipVerify: true,
+		ReauthInterval:     common.DefaultReauthInterval,
 	}
 )
 

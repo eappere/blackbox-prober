@@ -2,7 +2,6 @@ package aerospike
 
 import (
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 
@@ -25,13 +24,10 @@ func (conf *AerospikeProbeConfig) buildClusterClientConfig(logger log.Logger, en
 		ok          bool
 	)
 	if authEnabled {
-		username, ok = os.LookupEnv(conf.AerospikeEndpointConfig.UsernameEnv)
-		if !ok {
-			return nil, fmt.Errorf("error: username not found in env (%s)", conf.AerospikeEndpointConfig.UsernameEnv)
-		}
-		password, ok = os.LookupEnv(conf.AerospikeEndpointConfig.PasswordEnv)
-		if !ok {
-			return nil, fmt.Errorf("error: password not found in env (%s)", conf.AerospikeEndpointConfig.PasswordEnv)
+		var err error
+		username, password, err = common.LoadBasicAuthCredentials(authEnabled, conf.AerospikeEndpointConfig.UsernameEnv, conf.AerospikeEndpointConfig.PasswordEnv)
+		if err != nil {
+			return nil, err
 		}
 	}
 

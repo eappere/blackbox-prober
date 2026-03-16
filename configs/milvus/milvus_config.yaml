@@ -43,6 +43,7 @@ client_config:
   index_timeout: 600s
   ensure_database_timeout: 600s
   ### Client connection configuration ###
+  reauth_interval: 20m
   max_retry: 3 # Specifies the maximum number of times the client should retry the connection.
   max_backoff: 3s # Specifies the maximum back-off duration for the connection (time.Duration)
 checks_configs:

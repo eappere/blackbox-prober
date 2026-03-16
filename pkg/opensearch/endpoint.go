@@ -3,13 +3,16 @@ package opensearch
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
 	"github.com/criteo/blackbox-prober/pkg/common"
 	"github.com/go-kit/log"
+	"github.com/go-kit/log/level"
 	"github.com/opensearch-project/opensearch-go/v4/opensearchapi"
 	"github.com/opensearch-project/opensearch-go/v4/opensearchutil"
 )
@@ -25,6 +28,8 @@ type OpenSearchEndpoint struct {
 
 	// a map keeping information about nodes to enrich metrics
 	nodeInfoCache map[string]*common.ClusterNodeInfo
+	transport     *http.Transport
+	reauthState   common.ReauthState
 }
 
 func (e *OpenSearchEndpoint) GetHash() string {
@@ -39,21 +44,58 @@ func (e *OpenSearchEndpoint) IsCluster() bool {
 	return e.ClusterLevel
 }
 
+func (e *OpenSearchEndpoint) newHTTPTransport() *http.Transport {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if e.Config.InsecureSkipVerify {
+		if transport.TLSClientConfig == nil {
+			transport.TLSClientConfig = &tls.Config{}
+		}
+		transport.TLSClientConfig.InsecureSkipVerify = true
+	}
+
+	return transport
+}
+
 func (e *OpenSearchEndpoint) Connect() error {
+	username, password, err := common.LoadBasicAuthCredentials(e.Config.AuthEnabled, e.Config.UsernameEnv, e.Config.PasswordEnv)
+	if err != nil {
+		return err
+	}
+	e.ClientConfig.Client.Username = username
+	e.ClientConfig.Client.Password = password
+	e.transport = e.newHTTPTransport()
+	e.ClientConfig.Client.Transport = e.transport
+
 	client, err := opensearchapi.NewClient(e.ClientConfig)
 	if err != nil {
 		return fmt.Errorf("error creating opensearch client: %v", err)
 	}
 	e.Client = client
+	e.reauthState.MarkConnected(time.Now())
 	return nil
 }
 
 func (e *OpenSearchEndpoint) Refresh() error {
+	if e.Client == nil {
+		return e.Connect()
+	}
+
+	reauthed, err := common.ReauthIfNeeded(time.Now(), e.Config.ReauthInterval, &e.reauthState, e.Close, e.Connect)
+	if err != nil {
+		return err
+	}
+	if reauthed {
+		level.Info(e.Logger).Log("msg", "Reauthenticated OpenSearch endpoint connection", "interval", e.Config.ReauthInterval)
+	}
 	return nil
 }
 
-// There is no Close method for opensearch client
 func (e *OpenSearchEndpoint) Close() error {
+	if e.transport != nil {
+		e.transport.CloseIdleConnections()
+		e.transport = nil
+	}
+	e.Client = nil
 	return nil
 }
 

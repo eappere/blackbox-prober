@@ -4,7 +4,6 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -59,7 +58,6 @@ func (conf *OpenSearchProbeConfig) buildOpenSearchEndpoint(logger log.Logger, en
 	var (
 		username string
 		password string
-		ok       bool
 	)
 
 	// Insecure Skip Verify
@@ -72,13 +70,10 @@ func (conf *OpenSearchProbeConfig) buildOpenSearchEndpoint(logger log.Logger, en
 	}
 
 	if authEnabled {
-		username, ok = os.LookupEnv(conf.OpenSearchEndpointConfig.UsernameEnv)
-		if !ok {
-			return nil, fmt.Errorf("error: username not found in env (%s)", conf.OpenSearchEndpointConfig.UsernameEnv)
-		}
-		password, ok = os.LookupEnv(conf.OpenSearchEndpointConfig.PasswordEnv)
-		if !ok {
-			return nil, fmt.Errorf("error: password not found in env (%s)", conf.OpenSearchEndpointConfig.PasswordEnv)
+		var err error
+		username, password, err = common.LoadBasicAuthCredentials(authEnabled, conf.OpenSearchEndpointConfig.UsernameEnv, conf.OpenSearchEndpointConfig.PasswordEnv)
+		if err != nil {
+			return nil, err
 		}
 
 		clientConfig.Client.Username = username

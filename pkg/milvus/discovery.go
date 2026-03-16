@@ -3,8 +3,8 @@ package milvus
 import (
 	"errors"
 	"fmt"
-	"os"
 
+	"github.com/criteo/blackbox-prober/pkg/common"
 	"github.com/criteo/blackbox-prober/pkg/discovery"
 	"github.com/criteo/blackbox-prober/pkg/topology"
 	"github.com/criteo/blackbox-prober/pkg/utils"
@@ -32,13 +32,10 @@ func (conf *MilvusProbeConfig) generateClusterEndpointsFromEntry(logger log.Logg
 	)
 
 	if authEnabled {
-		username, ok = os.LookupEnv(conf.MilvusEndpointConfig.UsernameEnv)
-		if !ok {
-			return nil, fmt.Errorf("error: username not found in env (%s)", conf.MilvusEndpointConfig.UsernameEnv)
-		}
-		password, ok = os.LookupEnv(conf.MilvusEndpointConfig.PasswordEnv)
-		if !ok {
-			return nil, fmt.Errorf("error: password not found in env (%s)", conf.MilvusEndpointConfig.PasswordEnv)
+		var err error
+		username, password, err = common.LoadBasicAuthCredentials(authEnabled, conf.MilvusEndpointConfig.UsernameEnv, conf.MilvusEndpointConfig.PasswordEnv)
+		if err != nil {
+			return nil, err
 		}
 	}
 	tlsEnabled := utils.Contains(entry.Tags, conf.MilvusEndpointConfig.TLSTag)

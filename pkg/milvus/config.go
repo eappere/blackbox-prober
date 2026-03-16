@@ -3,6 +3,7 @@ package milvus
 import (
 	"time"
 
+	"github.com/criteo/blackbox-prober/pkg/common"
 	"github.com/criteo/blackbox-prober/pkg/discovery"
 	"github.com/criteo/blackbox-prober/pkg/scheduler"
 )
@@ -43,8 +44,9 @@ type MilvusEndpointConfig struct {
 	CreateDatabaseTimeout time.Duration `yaml:"create_database_timeout,omitempty"`
 
 	// Client configuration for probe
-	MaxRetry   uint          `yaml:"max_retry,omitempty"`
-	MaxBackoff time.Duration `yaml:"max_backoff,omitempty"`
+	ReauthInterval time.Duration `yaml:"reauth_interval,omitempty"`
+	MaxRetry       uint          `yaml:"max_retry,omitempty"`
+	MaxBackoff     time.Duration `yaml:"max_backoff,omitempty"`
 }
 
 var (
@@ -72,6 +74,7 @@ var (
 		InitialFlushTimeout:   300 * time.Second,
 		IndexTimeout:          600 * time.Second,
 		CreateDatabaseTimeout: 600 * time.Second,
+		ReauthInterval:        common.DefaultReauthInterval,
 	}
 )
 

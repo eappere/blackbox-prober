@@ -21,6 +21,7 @@ client_config:
   tls_tag: "ssl"
   # Skip TLS verification
   insecure_skip_verify: true
+  reauth_interval: 20m
 checks_configs:
   latency_check:
     enable: true

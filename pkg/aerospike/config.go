@@ -58,6 +58,7 @@ type AerospikeEndpointConfig struct {
 	MinConnectionsPerNode             int           `yaml:"min_connections_per_node,omitempty"`
 	TendInterval                      time.Duration `yaml:"tend_interval,omitempty"`
 	TotalTimeout                      time.Duration `yaml:"total_timeout,omitempty"`
+	ReauthInterval                    time.Duration `yaml:"reauth_interval,omitempty"`
 	ExitFastOnExhaustedConnectionPool bool          `yaml:"exit_fast_on_exhausted_connection_pool,omitempty"`
 }
 
@@ -79,6 +80,7 @@ var (
 		MinConnectionsPerNode:             0,
 		TendInterval:                      time.Second,
 		TotalTimeout:                      30 * time.Second,
+		ReauthInterval:                    common.DefaultReauthInterval,
 		ExitFastOnExhaustedConnectionPool: false,
 	}
 )

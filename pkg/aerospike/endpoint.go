@@ -3,7 +3,9 @@ package aerospike
 import (
 	"crypto/tls"
 	"fmt"
+	"time"
 
+	"github.com/criteo/blackbox-prober/pkg/common"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/prometheus/client_golang/prometheus"
@@ -25,6 +27,7 @@ type AerospikeEndpoint struct {
 	ClusterConfig *AerospikeClientConfig
 	Logger        log.Logger
 	Namespace     string
+	reauthState   common.ReauthState
 }
 
 func (e *AerospikeEndpoint) GetHash() string {
@@ -52,13 +55,26 @@ func (e *AerospikeEndpoint) setMetricFromASStats(stats map[string]interface{}, k
 	clusterStats.WithLabelValues(e.ClusterConfig.clusterName, e.GetName(), e.Namespace, key).Set(value)
 }
 
-func (e *AerospikeEndpoint) refreshMetrics() {
-	stats, err := e.Client.Stats()
-	cluster_stats := stats["cluster-aggregated-stats"].(map[string]interface{})
-	if err != nil {
-		level.Error(e.Logger).Log("msg", "Failed to pull metrics from aerospike client", "err", err)
-		return
+func (e *AerospikeEndpoint) refreshMetrics() error {
+	if e.Client == nil {
+		return fmt.Errorf("aerospike endpoint client not initialized")
 	}
+
+	stats, err := e.Client.Stats()
+	if err != nil {
+		return err
+	}
+
+	clusterStatsRaw, ok := stats["cluster-aggregated-stats"]
+	if !ok {
+		return fmt.Errorf("aerospike client stats missing cluster-aggregated-stats")
+	}
+
+	cluster_stats, ok := clusterStatsRaw.(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("aerospike client stats cluster-aggregated-stats has unexpected type %T", clusterStatsRaw)
+	}
+
 	e.setMetricFromASStats(cluster_stats, "open-connections")
 	e.setMetricFromASStats(cluster_stats, "closed-connections")
 	e.setMetricFromASStats(cluster_stats, "connections-attempts")
@@ -71,6 +87,8 @@ func (e *AerospikeEndpoint) refreshMetrics() {
 	e.setMetricFromASStats(cluster_stats, "tends-total")
 	e.setMetricFromASStats(cluster_stats, "tends-successful")
 	e.setMetricFromASStats(cluster_stats, "tends-failed")
+
+	return nil
 }
 
 func (e *AerospikeEndpoint) Connect() error {
@@ -90,6 +108,14 @@ func (e *AerospikeEndpoint) Connect() error {
 	}
 
 	if e.ClusterConfig.authEnabled {
+		username, password, err := common.LoadBasicAuthCredentials(true, e.ClusterConfig.genericConfig.UsernameEnv, e.ClusterConfig.genericConfig.PasswordEnv)
+		if err != nil {
+			return err
+		}
+
+		e.ClusterConfig.username = username
+		e.ClusterConfig.password = password
+
 		if e.ClusterConfig.genericConfig.AuthExternal {
 			clientPolicy.AuthMode = as.AuthModeExternal
 		} else {
@@ -105,18 +131,35 @@ func (e *AerospikeEndpoint) Connect() error {
 		return err
 	}
 	e.Client = client
-	e.Refresh()
-	return nil
+	e.reauthState.MarkConnected(time.Now())
+	return e.refreshMetrics()
 }
 
 func (e *AerospikeEndpoint) Refresh() error {
-	e.refreshMetrics()
+	if e.Client == nil {
+		return e.Connect()
+	}
+
+	reauthed, err := common.ReauthIfNeeded(time.Now(), e.ClusterConfig.genericConfig.ReauthInterval, &e.reauthState, e.Close, e.Connect)
+	if err != nil {
+		return err
+	}
+	if reauthed {
+		level.Info(e.Logger).Log("msg", "Reauthenticated Aerospike endpoint connection", "interval", e.ClusterConfig.genericConfig.ReauthInterval)
+		return nil
+	}
+
+	if err := e.refreshMetrics(); err != nil {
+		level.Error(e.Logger).Log("msg", "Failed to pull metrics from aerospike client", "err", err)
+		return err
+	}
 	return nil
 }
 
 func (e *AerospikeEndpoint) Close() error {
 	if e != nil && e.Client != nil {
 		e.Client.Close()
+		e.Client = nil
 	}
 	return nil
 }

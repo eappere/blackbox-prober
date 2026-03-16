@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/criteo/blackbox-prober/pkg/common"
 	"github.com/go-kit/log"
@@ -200,6 +201,34 @@ func TestAvailabilityCheckWrongEndpointType(t *testing.T) {
 	expected := "error: given endpoint is not an opensearch endpoint"
 	if err.Error() != expected {
 		t.Fatalf("expected error %q, got %q", expected, err.Error())
+	}
+}
+
+func TestRefreshReauthsClientWhenIntervalElapsed(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	endpoint := newTestEndpoint(t, server, map[string]*common.ClusterNodeInfo{})
+	endpoint.Config = OpenSearchEndpointConfig{
+		ReauthInterval: 50 * time.Millisecond,
+	}
+	endpoint.reauthState.MarkConnected(time.Now().Add(-time.Minute))
+
+	originalClient := endpoint.Client
+
+	if err := endpoint.Refresh(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if endpoint.Client == nil {
+		t.Fatal("expected refreshed client to be initialized")
+	}
+	if endpoint.Client == originalClient {
+		t.Fatal("expected refresh to recreate the client")
+	}
+	if endpoint.transport == nil {
+		t.Fatal("expected refresh to recreate the HTTP transport")
 	}
 }
 
